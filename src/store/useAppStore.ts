@@ -28,8 +28,9 @@ type Action =
   | { type: "tab.rename"; id: string; title: string }
   | { type: "request.patch"; id: string; patch: Partial<RequestDraft> }
   | { type: "response.set"; id: string; response: ResponseView }
-  | { type: "collection.group.add" }
+  | { type: "collection.group.add"; parentGroupId?: string | null }
   | { type: "collection.group.rename"; groupId: string; name: string }
+  | { type: "collection.group.remove"; groupId: string }
   | { type: "collection.request.add"; groupId: string }
   | { type: "collection.request.rename"; groupId: string; itemId: string; name: string }
   | { type: "collection.request.remove"; groupId: string; itemId: string }
@@ -94,6 +95,7 @@ function normalizeCollection(group: RequestGroup): RequestGroup {
         collectionItemId: item.id,
       }),
     })),
+    childGroups: (group.childGroups ?? []).map(normalizeCollection),
   };
 }
 
@@ -111,37 +113,87 @@ function defaultCollections(): RequestGroup[] {
       id: groupId,
       name: "默认分组",
       items: [{ id: itemId, name: request.name, request }],
+      childGroups: [],
     },
   ];
+}
+
+function sanitizeGroup(group: RequestGroup, seenGroupIds: Set<string>): RequestGroup {
+  const groupId = group.id && !seenGroupIds.has(group.id) ? group.id : nanoid();
+  seenGroupIds.add(groupId);
+  const seenItemIds = new Set<string>();
+
+  const items = (group.items ?? [])
+    .filter((item) => item && item.request && typeof item.request.url === "string")
+    .map((item) => {
+      const itemId = item.id && !seenItemIds.has(item.id) ? item.id : nanoid();
+      seenItemIds.add(itemId);
+      const name = item.name || item.request.name || "未命名接口";
+      const request = cloneDraft({
+        ...item.request,
+        id: itemId,
+        name,
+        collectionGroupId: groupId,
+        collectionItemId: itemId,
+      });
+      return { id: itemId, name, request };
+    });
+
+  return normalizeCollection({
+    id: groupId,
+    name: group.name,
+    items,
+    childGroups: (group.childGroups ?? []).map((child) => sanitizeGroup(child, seenGroupIds)),
+  });
 }
 
 function sanitizeCollections(input: RequestGroup[]): RequestGroup[] {
   const seenGroupIds = new Set<string>();
   return input
-    .filter((group) => group && typeof group.name === "string" && Array.isArray(group.items))
-    .map((group) => {
-      const groupId = group.id && !seenGroupIds.has(group.id) ? group.id : nanoid();
-      seenGroupIds.add(groupId);
+    .filter((group) => group && typeof group.name === "string")
+    .map((group) => sanitizeGroup(group, seenGroupIds));
+}
 
-      const seenItemIds = new Set<string>();
-      const items = group.items
-        .filter((item) => item && item.request && typeof item.request.url === "string")
-        .map((item) => {
-          const itemId = item.id && !seenItemIds.has(item.id) ? item.id : nanoid();
-          seenItemIds.add(itemId);
-          const name = item.name || item.request.name || "未命名接口";
-          const request = cloneDraft({
-            ...item.request,
-            id: itemId,
-            name,
-            collectionGroupId: groupId,
-            collectionItemId: itemId,
-          });
-          return { id: itemId, name, request };
-        });
+function findCollectionItem(
+  groups: RequestGroup[],
+  groupId: string,
+  itemId: string,
+): { id: string; name: string; request: RequestDraft } | null {
+  for (const group of groups) {
+    if (group.id === groupId) {
+      const item = group.items.find((x) => x.id === itemId);
+      if (item) return item;
+    }
+    const nested = findCollectionItem(group.childGroups, groupId, itemId);
+    if (nested) return nested;
+  }
+  return null;
+}
 
-      return normalizeCollection({ id: groupId, name: group.name, items });
-    });
+function mapGroups(groups: RequestGroup[], targetGroupId: string, mapper: (group: RequestGroup) => RequestGroup): RequestGroup[] {
+  return groups.map((group) => {
+    if (group.id === targetGroupId) return mapper(group);
+    return { ...group, childGroups: mapGroups(group.childGroups, targetGroupId, mapper) };
+  });
+}
+
+function removeGroupFromTree(groups: RequestGroup[], groupId: string): RequestGroup[] {
+  return groups
+    .filter((group) => group.id !== groupId)
+    .map((group) => ({ ...group, childGroups: removeGroupFromTree(group.childGroups, groupId) }));
+}
+
+function collectGroupIds(group: RequestGroup): string[] {
+  return [group.id, ...group.childGroups.flatMap(collectGroupIds)];
+}
+
+function findGroupById(groups: RequestGroup[], groupId: string): RequestGroup | null {
+  for (const group of groups) {
+    if (group.id === groupId) return group;
+    const nested = findGroupById(group.childGroups, groupId);
+    if (nested) return nested;
+  }
+  return null;
 }
 
 function initialState(): State {
@@ -179,11 +231,8 @@ function reducer(state: State, action: Action): State {
       const existing = state.tabState.tabs.find(
         (tab) => tab.request.collectionGroupId === action.groupId && tab.request.collectionItemId === action.itemId,
       );
-      if (existing) {
-        return { ...state, tabState: { ...state.tabState, activeTabId: existing.id } };
-      }
-      const group = state.collections.find((g) => g.id === action.groupId);
-      const item = group?.items.find((x) => x.id === action.itemId);
+      if (existing) return { ...state, tabState: { ...state.tabState, activeTabId: existing.id } };
+      const item = findCollectionItem(state.collections, action.groupId, action.itemId);
       if (!item) return state;
       const next = {
         id: nanoid(),
@@ -191,10 +240,7 @@ function reducer(state: State, action: Action): State {
         request: cloneDraft(item.request),
         response: {},
       };
-      return {
-        ...state,
-        tabState: { tabs: [...state.tabState.tabs, next], activeTabId: next.id },
-      };
+      return { ...state, tabState: { tabs: [...state.tabState.tabs, next], activeTabId: next.id } };
     }
     case "tab.close": {
       const tabs = state.tabState.tabs.filter((t) => t.id !== action.id);
@@ -204,10 +250,14 @@ function reducer(state: State, action: Action): State {
     }
     case "tab.activate":
       return { ...state, tabState: { ...state.tabState, activeTabId: action.id } };
-    case "tab.rename": {
-      const tabs = state.tabState.tabs.map((t) => (t.id === action.id ? { ...t, title: action.title } : t));
-      return { ...state, tabState: { ...state.tabState, tabs } };
-    }
+    case "tab.rename":
+      return {
+        ...state,
+        tabState: {
+          ...state.tabState,
+          tabs: state.tabState.tabs.map((t) => (t.id === action.id ? { ...t, title: action.title } : t)),
+        },
+      };
     case "request.patch": {
       const tabs = state.tabState.tabs.map((t) =>
         t.id === action.id
@@ -218,35 +268,57 @@ function reducer(state: State, action: Action): State {
       if (!patchedTab?.request.collectionGroupId || !patchedTab.request.collectionItemId) {
         return { ...state, tabState: { ...state.tabState, tabs } };
       }
-      const collections = state.collections.map((group) =>
-        group.id === patchedTab.request.collectionGroupId
-          ? {
-              ...group,
-              items: group.items.map((item) =>
-                item.id === patchedTab.request.collectionItemId
-                  ? { ...item, name: patchedTab.request.name, request: cloneDraft(patchedTab.request) }
-                  : item,
-              ),
-            }
-          : group,
-      );
+      const collections = mapGroups(state.collections, patchedTab.request.collectionGroupId, (group) => ({
+        ...group,
+        items: group.items.map((item) =>
+          item.id === patchedTab.request.collectionItemId
+            ? { ...item, name: patchedTab.request.name, request: cloneDraft(patchedTab.request) }
+            : item,
+        ),
+      }));
       return { ...state, tabState: { ...state.tabState, tabs }, collections };
     }
-    case "response.set": {
-      const tabs = state.tabState.tabs.map((t) => (t.id === action.id ? { ...t, response: action.response } : t));
-      return { ...state, tabState: { ...state.tabState, tabs } };
-    }
+    case "response.set":
+      return {
+        ...state,
+        tabState: {
+          ...state.tabState,
+          tabs: state.tabState.tabs.map((t) => (t.id === action.id ? { ...t, response: action.response } : t)),
+        },
+      };
     case "collection.group.add": {
-      const next: RequestGroup = { id: nanoid(), name: `分组 ${state.collections.length + 1}`, items: [] };
-      return { ...state, collections: [...state.collections, next] };
+      const next: RequestGroup = {
+        id: nanoid(),
+        name: action.parentGroupId ? "新子分组" : `分组 ${state.collections.length + 1}`,
+        items: [],
+        childGroups: [],
+      };
+      if (!action.parentGroupId) return { ...state, collections: [...state.collections, next] };
+      return {
+        ...state,
+        collections: mapGroups(state.collections, action.parentGroupId, (group) => ({
+          ...group,
+          childGroups: [...group.childGroups, next],
+        })),
+      };
     }
     case "collection.group.rename":
       return {
         ...state,
-        collections: state.collections.map((group) =>
-          group.id === action.groupId ? { ...group, name: action.name } : group,
-        ),
+        collections: mapGroups(state.collections, action.groupId, (group) => ({ ...group, name: action.name })),
       };
+    case "collection.group.remove": {
+      const target = findGroupById(state.collections, action.groupId);
+      const removedGroupIds = target ? collectGroupIds(target) : [action.groupId];
+      const collections = removeGroupFromTree(state.collections, action.groupId);
+      const tabs = state.tabState.tabs.filter(
+        (tab) => !removedGroupIds.includes(tab.request.collectionGroupId ?? "__none__"),
+      );
+      const keptTabs = tabs.length ? tabs : [{ id: nanoid(), title: "Tab 1", request: newDraft(), response: {} }];
+      const activeTabStillExists = keptTabs.some((tab) => tab.id === state.tabState.activeTabId);
+      const activeTabId = activeTabStillExists ? state.tabState.activeTabId : keptTabs[0]!.id;
+      return { ...state, collections, tabState: { tabs: keptTabs, activeTabId } };
+    }
     case "collection.request.add": {
       const itemId = nanoid();
       const request = cloneDraft({
@@ -255,11 +327,10 @@ function reducer(state: State, action: Action): State {
         collectionGroupId: action.groupId,
         collectionItemId: itemId,
       });
-      const collections = state.collections.map((group) =>
-        group.id === action.groupId
-          ? { ...group, items: [...group.items, { id: itemId, name: request.name, request }] }
-          : group,
-      );
+      const collections = mapGroups(state.collections, action.groupId, (group) => ({
+        ...group,
+        items: [...group.items, { id: itemId, name: request.name, request }],
+      }));
       const existingTabIndex = state.tabState.tabs.findIndex((tab) => tab.id === state.tabState.activeTabId);
       const tabs = [...state.tabState.tabs];
       if (existingTabIndex >= 0) {
@@ -268,16 +339,12 @@ function reducer(state: State, action: Action): State {
       return { ...state, collections, tabState: { ...state.tabState, tabs } };
     }
     case "collection.request.rename": {
-      const collections = state.collections.map((group) =>
-        group.id === action.groupId
-          ? {
-              ...group,
-              items: group.items.map((item) =>
-                item.id === action.itemId ? { ...item, name: action.name, request: { ...item.request, name: action.name } } : item,
-              ),
-            }
-          : group,
-      );
+      const collections = mapGroups(state.collections, action.groupId, (group) => ({
+        ...group,
+        items: group.items.map((item) =>
+          item.id === action.itemId ? { ...item, name: action.name, request: { ...item.request, name: action.name } } : item,
+        ),
+      }));
       const tabs = state.tabState.tabs.map((tab) =>
         tab.request.collectionGroupId === action.groupId && tab.request.collectionItemId === action.itemId
           ? { ...tab, title: action.name || tab.title, request: { ...tab.request, name: action.name } }
@@ -286,11 +353,10 @@ function reducer(state: State, action: Action): State {
       return { ...state, collections, tabState: { ...state.tabState, tabs } };
     }
     case "collection.request.remove": {
-      const collections = state.collections.map((group) =>
-        group.id === action.groupId
-          ? { ...group, items: group.items.filter((item) => item.id !== action.itemId) }
-          : group,
-      );
+      const collections = mapGroups(state.collections, action.groupId, (group) => ({
+        ...group,
+        items: group.items.filter((item) => item.id !== action.itemId),
+      }));
       const tabs = state.tabState.tabs.filter(
         (tab) => !(tab.request.collectionGroupId === action.groupId && tab.request.collectionItemId === action.itemId),
       );

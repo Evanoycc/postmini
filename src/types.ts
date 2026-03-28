@@ -43,4 +43,5 @@ export type RequestGroup = {
   id: string;
   name: string;
   items: SavedRequestItem[];
+  childGroups: RequestGroup[];
 };

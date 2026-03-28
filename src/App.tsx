@@ -85,8 +85,9 @@ function App() {
       <HistorySidebar
         collections={state.collections}
         activeCollectionItemId={activeTab.request.collectionItemId ?? null}
-        onAddGroup={() => dispatch({ type: "collection.group.add" })}
+        onAddGroup={(parentGroupId) => dispatch({ type: "collection.group.add", parentGroupId })}
         onRenameGroup={(groupId, name) => dispatch({ type: "collection.group.rename", groupId, name })}
+        onRemoveGroup={(groupId) => dispatch({ type: "collection.group.remove", groupId })}
         onAddRequest={(groupId) => dispatch({ type: "collection.request.add", groupId })}
         onRenameRequest={(groupId, itemId, name) =>
           dispatch({ type: "collection.request.rename", groupId, itemId, name })
@@ -103,9 +104,7 @@ function App() {
             tabs={tabsForBar}
             activeId={state.tabState.activeTabId}
             onActivate={(id) => dispatch({ type: "tab.activate", id })}
-            onNew={() => dispatch({ type: "tab.new" })}
             onClose={(id) => dispatch({ type: "tab.close", id })}
-            onRename={(id, title) => dispatch({ type: "tab.rename", id, title })}
           />
           <div className="topActions">
             <button type="button" className="btnGhost" onClick={() => setEnvOpen(true)}>
