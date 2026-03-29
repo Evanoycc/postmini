@@ -177,7 +177,8 @@ PostMini 不打算变成一个巨型 API 平台。
 发布到 GitHub 后，你可以在这里补截图：
 
 ```md
-![主界面](./docs/screenshot-main.png)
+<img width="2560" height="1384" alt="image" src="https://github.com/user-attachments/assets/4a2533e9-8cb4-410b-8344-e8b76e90456b" />
+
 ![接口分组](./docs/screenshot-groups.png)
 ```
 
