@@ -259,7 +259,31 @@ html[data-theme="dark"] .treeRow {
   font-weight: 700;
 }
 
+.treeInlineInput {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid rgba(93, 143, 255, 0.28);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 8px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+html[data-theme="dark"] .treeInlineInput {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.treeGroupInput {
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .treeRequestLabel {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.treeRequestInput {
   font-size: 11px;
   font-weight: 600;
 }

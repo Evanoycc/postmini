@@ -8,6 +8,11 @@ type ContextMenuState =
   | { x: number; y: number; type: "group"; groupId: string; groupName: string }
   | { x: number; y: number; type: "request"; groupId: string; itemId: string; itemName: string };
 
+type EditingState =
+  | { type: "group"; groupId: string; value: string }
+  | { type: "request"; groupId: string; itemId: string; value: string }
+  | null;
+
 export function HistorySidebar(props: {
   locale: Locale;
   collections: RequestGroup[];
@@ -26,6 +31,7 @@ export function HistorySidebar(props: {
   const [q, setQ] = useState("");
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Record<string, boolean>>({});
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [editing, setEditing] = useState<EditingState>(null);
   const collectionFileRef = useRef<HTMLInputElement | null>(null);
   const treeRef = useRef<HTMLDivElement | null>(null);
 
@@ -132,16 +138,29 @@ export function HistorySidebar(props: {
     props.onRemoveRequest(groupId, itemId);
   }
 
-  function renameGroup(groupId: string, currentName: string) {
-    const nextName = window.prompt(m.promptRenameGroup, currentName);
-    if (nextName === null) return;
-    props.onRenameGroup(groupId, nextName.trim() || m.unnamedGroup);
+  function startRenameGroup(groupId: string, currentName: string) {
+    setEditing({ type: "group", groupId, value: currentName || m.unnamedGroup });
   }
 
-  function renameRequest(groupId: string, itemId: string, currentName: string) {
-    const nextName = window.prompt(m.promptRenameRequest, currentName);
-    if (nextName === null) return;
-    props.onRenameRequest(groupId, itemId, nextName.trim() || m.unnamedRequest);
+  function startRenameRequest(groupId: string, itemId: string, currentName: string) {
+    setEditing({ type: "request", groupId, itemId, value: currentName || m.unnamedRequest });
+  }
+
+  function commitRename() {
+    if (!editing) return;
+
+    const nextValue =
+      editing.type === "group"
+        ? editing.value.trim() || m.unnamedGroup
+        : editing.value.trim() || m.unnamedRequest;
+
+    if (editing.type === "group") {
+      props.onRenameGroup(editing.groupId, nextValue);
+    } else {
+      props.onRenameRequest(editing.groupId, editing.itemId, nextValue);
+    }
+
+    setEditing(null);
   }
 
   function renderContextMenu() {
@@ -165,7 +184,7 @@ export function HistorySidebar(props: {
     if (contextMenu.type === "group") {
       return (
         <div className="treeContextMenu" style={style} onClick={(e) => e.stopPropagation()}>
-          <button type="button" className="treeContextItem" onClick={() => { renameGroup(contextMenu.groupId, contextMenu.groupName); setContextMenu(null); }}>
+          <button type="button" className="treeContextItem" onClick={() => { startRenameGroup(contextMenu.groupId, contextMenu.groupName); setContextMenu(null); }}>
             {m.renameGroup}
           </button>
           <button type="button" className="treeContextItem" onClick={() => { props.onAddGroup(contextMenu.groupId); setContextMenu(null); }}>
@@ -183,7 +202,7 @@ export function HistorySidebar(props: {
 
     return (
       <div className="treeContextMenu" style={style} onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="treeContextItem" onClick={() => { renameRequest(contextMenu.groupId, contextMenu.itemId, contextMenu.itemName); setContextMenu(null); }}>
+        <button type="button" className="treeContextItem" onClick={() => { startRenameRequest(contextMenu.groupId, contextMenu.itemId, contextMenu.itemName); setContextMenu(null); }}>
           {m.renameRequest}
         </button>
         <button type="button" className="treeContextItem" onClick={() => { props.onAddRequest(contextMenu.groupId); setContextMenu(null); }}>
@@ -198,6 +217,7 @@ export function HistorySidebar(props: {
 
   function renderGroup(group: RequestGroup, depth = 0) {
     const collapsed = Boolean(collapsedGroupIds[group.id]);
+    const isEditingGroup = editing?.type === "group" && editing.groupId === group.id;
 
     return (
       <div key={group.id} className="treeNode">
@@ -212,27 +232,64 @@ export function HistorySidebar(props: {
             {collapsed ? "▸" : "▾"}
           </button>
           <span className="treeBranchMark">{m.groupMarker}</span>
-          <span className="treeNameLabel treeGroupLabel" title={group.name}>
-            {group.name || m.unnamedGroup}
-          </span>
+          {isEditingGroup ? (
+            <input
+              className="treeInlineInput treeGroupInput"
+              value={editing.value}
+              autoFocus
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => setEditing({ ...editing, value: event.currentTarget.value })}
+              onBlur={commitRename}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitRename();
+                if (event.key === "Escape") setEditing(null);
+              }}
+            />
+          ) : (
+            <span className="treeNameLabel treeGroupLabel" title={group.name}>
+              {group.name || m.unnamedGroup}
+            </span>
+          )}
         </div>
 
         {!collapsed ? (
           <div className="treeChildren">
-            {group.items.map((item) => (
-              <div
-                key={item.id}
-                className={item.id === props.activeCollectionItemId ? "treeRow treeRequestRow active" : "treeRow treeRequestRow"}
-                style={{ paddingLeft: 44 + depth * 16 }}
-                onClick={() => props.onOpenRequest(group.id, item.id)}
-                onContextMenu={(event) => openRequestMenu(event, group.id, item.id, item.name)}
-              >
-                <span className={`treeMethodMini ${item.request.method}`}>{item.request.method}</span>
-                <span className="treeNameLabel treeRequestLabel" title={item.name}>
-                  {item.name || m.unnamedRequest}
-                </span>
-              </div>
-            ))}
+            {group.items.map((item) => {
+              const isEditingRequest =
+                editing?.type === "request" && editing.groupId === group.id && editing.itemId === item.id;
+
+              return (
+                <div
+                  key={item.id}
+                  className={item.id === props.activeCollectionItemId ? "treeRow treeRequestRow active" : "treeRow treeRequestRow"}
+                  style={{ paddingLeft: 44 + depth * 16 }}
+                  onClick={() => {
+                    if (!isEditingRequest) props.onOpenRequest(group.id, item.id);
+                  }}
+                  onContextMenu={(event) => openRequestMenu(event, group.id, item.id, item.name)}
+                >
+                  <span className={`treeMethodMini ${item.request.method}`}>{item.request.method}</span>
+                  {isEditingRequest ? (
+                    <input
+                      className="treeInlineInput treeRequestInput"
+                      value={editing.value}
+                      autoFocus
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) => setEditing({ ...editing, value: event.currentTarget.value })}
+                      onBlur={commitRename}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") commitRename();
+                        if (event.key === "Escape") setEditing(null);
+                      }}
+                    />
+                  ) : (
+                    <span className="treeNameLabel treeRequestLabel" title={item.name}>
+                      {item.name || m.unnamedRequest}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
             {group.childGroups.map((child) => renderGroup(child, depth + 1))}
           </div>
         ) : null}
