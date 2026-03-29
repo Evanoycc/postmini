@@ -1,30 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { getMessages, type Locale } from "../i18n";
 import type { RequestGroup } from "../types";
 
 type ContextMenuState =
-  | {
-      x: number;
-      y: number;
-      type: "root";
-    }
-  | {
-      x: number;
-      y: number;
-      type: "group";
-      groupId: string;
-      groupName: string;
-    }
-  | {
-      x: number;
-      y: number;
-      type: "request";
-      groupId: string;
-      itemId: string;
-      itemName: string;
-    };
+  | { x: number; y: number; type: "root" }
+  | { x: number; y: number; type: "group"; groupId: string; groupName: string }
+  | { x: number; y: number; type: "request"; groupId: string; itemId: string; itemName: string };
 
 export function HistorySidebar(props: {
+  locale: Locale;
   collections: RequestGroup[];
   activeCollectionItemId: string | null;
   onAddGroup: (parentGroupId?: string | null) => void;
@@ -37,6 +22,7 @@ export function HistorySidebar(props: {
   onExportCollections: () => void;
   onImportCollections: (groups: RequestGroup[]) => void;
 }) {
+  const m = getMessages(props.locale);
   const [q, setQ] = useState("");
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Record<string, boolean>>({});
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -59,6 +45,7 @@ export function HistorySidebar(props: {
       if (group.name.toLowerCase().includes(qq) || items.length > 0 || childGroups.length > 0) {
         return { ...group, items, childGroups };
       }
+
       return null;
     };
 
@@ -89,10 +76,10 @@ export function HistorySidebar(props: {
   }
 
   async function onCollectionsFileChange(e: ChangeEvent<HTMLInputElement>) {
-    const f = e.currentTarget.files?.[0];
+    const file = e.currentTarget.files?.[0];
     e.currentTarget.value = "";
-    if (!f) return;
-    const text = await f.text();
+    if (!file) return;
+    const text = await file.text();
     try {
       const data = JSON.parse(text) as RequestGroup[];
       if (Array.isArray(data)) props.onImportCollections(data);
@@ -114,60 +101,47 @@ export function HistorySidebar(props: {
   function openGroupMenu(event: MouseEvent, group: RequestGroup) {
     event.preventDefault();
     event.stopPropagation();
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      type: "group",
-      groupId: group.id,
-      groupName: group.name,
-    });
+    setContextMenu({ x: event.clientX, y: event.clientY, type: "group", groupId: group.id, groupName: group.name });
   }
 
   function openRequestMenu(event: MouseEvent, groupId: string, itemId: string, itemName: string) {
     event.preventDefault();
     event.stopPropagation();
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      type: "request",
-      groupId,
-      itemId,
-      itemName,
-    });
+    setContextMenu({ x: event.clientX, y: event.clientY, type: "request", groupId, itemId, itemName });
   }
 
   async function confirmRemoveGroup(groupId: string, groupName: string) {
-    const ok = await confirm(`是否确定删除分组“${groupName}”？\n删除后，分组内的所有接口和子分组也会一起删除。`, {
-      title: "确认删除",
+    const ok = await confirm(m.confirmDeleteGroup(groupName), {
+      title: m.confirmDeleteTitle,
       kind: "warning",
-      okLabel: "确定删除",
-      cancelLabel: "取消",
+      okLabel: m.confirmDeleteOk,
+      cancelLabel: m.confirmCancel,
     });
     if (!ok) return;
     props.onRemoveGroup(groupId);
   }
 
   async function confirmRemoveRequest(groupId: string, itemId: string, itemName: string) {
-    const ok = await confirm(`是否确定删除接口“${itemName}”？`, {
-      title: "确认删除",
+    const ok = await confirm(m.confirmDeleteRequest(itemName), {
+      title: m.confirmDeleteTitle,
       kind: "warning",
-      okLabel: "确定删除",
-      cancelLabel: "取消",
+      okLabel: m.confirmDeleteOk,
+      cancelLabel: m.confirmCancel,
     });
     if (!ok) return;
     props.onRemoveRequest(groupId, itemId);
   }
 
   function renameGroup(groupId: string, currentName: string) {
-    const nextName = window.prompt("请输入新的分组名称", currentName);
+    const nextName = window.prompt(m.promptRenameGroup, currentName);
     if (nextName === null) return;
-    props.onRenameGroup(groupId, nextName.trim() || "未命名分组");
+    props.onRenameGroup(groupId, nextName.trim() || m.unnamedGroup);
   }
 
   function renameRequest(groupId: string, itemId: string, currentName: string) {
-    const nextName = window.prompt("请输入新的接口名称", currentName);
+    const nextName = window.prompt(m.promptRenameRequest, currentName);
     if (nextName === null) return;
-    props.onRenameRequest(groupId, itemId, nextName.trim() || "未命名接口");
+    props.onRenameRequest(groupId, itemId, nextName.trim() || m.unnamedRequest);
   }
 
   function renderContextMenu() {
@@ -181,15 +155,8 @@ export function HistorySidebar(props: {
     if (contextMenu.type === "root") {
       return (
         <div className="treeContextMenu" style={style} onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="treeContextItem"
-            onClick={() => {
-              props.onAddGroup(null);
-              setContextMenu(null);
-            }}
-          >
-            新建分组
+          <button type="button" className="treeContextItem" onClick={() => { props.onAddGroup(null); setContextMenu(null); }}>
+            {m.newGroup}
           </button>
         </div>
       );
@@ -198,45 +165,17 @@ export function HistorySidebar(props: {
     if (contextMenu.type === "group") {
       return (
         <div className="treeContextMenu" style={style} onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="treeContextItem"
-            onClick={() => {
-              renameGroup(contextMenu.groupId, contextMenu.groupName);
-              setContextMenu(null);
-            }}
-          >
-            重命名分组
+          <button type="button" className="treeContextItem" onClick={() => { renameGroup(contextMenu.groupId, contextMenu.groupName); setContextMenu(null); }}>
+            {m.renameGroup}
           </button>
-          <button
-            type="button"
-            className="treeContextItem"
-            onClick={() => {
-              props.onAddGroup(contextMenu.groupId);
-              setContextMenu(null);
-            }}
-          >
-            新建子分组
+          <button type="button" className="treeContextItem" onClick={() => { props.onAddGroup(contextMenu.groupId); setContextMenu(null); }}>
+            {m.newChildGroup}
           </button>
-          <button
-            type="button"
-            className="treeContextItem"
-            onClick={() => {
-              props.onAddRequest(contextMenu.groupId);
-              setContextMenu(null);
-            }}
-          >
-            新建接口
+          <button type="button" className="treeContextItem" onClick={() => { props.onAddRequest(contextMenu.groupId); setContextMenu(null); }}>
+            {m.newRequest}
           </button>
-          <button
-            type="button"
-            className="treeContextItem danger"
-            onClick={() => {
-              void confirmRemoveGroup(contextMenu.groupId, contextMenu.groupName);
-              setContextMenu(null);
-            }}
-          >
-            删除分组
+          <button type="button" className="treeContextItem danger" onClick={() => { void confirmRemoveGroup(contextMenu.groupId, contextMenu.groupName); setContextMenu(null); }}>
+            {m.deleteGroup}
           </button>
         </div>
       );
@@ -244,35 +183,14 @@ export function HistorySidebar(props: {
 
     return (
       <div className="treeContextMenu" style={style} onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          className="treeContextItem"
-          onClick={() => {
-            renameRequest(contextMenu.groupId, contextMenu.itemId, contextMenu.itemName);
-            setContextMenu(null);
-          }}
-        >
-          重命名接口
+        <button type="button" className="treeContextItem" onClick={() => { renameRequest(contextMenu.groupId, contextMenu.itemId, contextMenu.itemName); setContextMenu(null); }}>
+          {m.renameRequest}
         </button>
-        <button
-          type="button"
-          className="treeContextItem"
-          onClick={() => {
-            props.onAddRequest(contextMenu.groupId);
-            setContextMenu(null);
-          }}
-        >
-          新建同级接口
+        <button type="button" className="treeContextItem" onClick={() => { props.onAddRequest(contextMenu.groupId); setContextMenu(null); }}>
+          {m.newSiblingRequest}
         </button>
-        <button
-          type="button"
-          className="treeContextItem danger"
-          onClick={() => {
-            void confirmRemoveRequest(contextMenu.groupId, contextMenu.itemId, contextMenu.itemName);
-            setContextMenu(null);
-          }}
-        >
-          删除接口
+        <button type="button" className="treeContextItem danger" onClick={() => { void confirmRemoveRequest(contextMenu.groupId, contextMenu.itemId, contextMenu.itemName); setContextMenu(null); }}>
+          {m.deleteRequest}
         </button>
       </div>
     );
@@ -280,27 +198,22 @@ export function HistorySidebar(props: {
 
   function renderGroup(group: RequestGroup, depth = 0) {
     const collapsed = Boolean(collapsedGroupIds[group.id]);
-    const isEmpty = group.items.length === 0 && group.childGroups.length === 0;
 
     return (
       <div key={group.id} className="treeNode">
-        <div
-          className="treeRow treeGroupRow"
-          style={{ paddingLeft: 12 + depth * 16 }}
-          onContextMenu={(event) => openGroupMenu(event, group)}
-        >
+        <div className="treeRow treeGroupRow" style={{ paddingLeft: 12 + depth * 16 }} onContextMenu={(event) => openGroupMenu(event, group)}>
           <button
             type="button"
             className="treeToggle"
             onClick={() => toggleGroup(group.id)}
-            aria-label={collapsed ? `展开分组 ${group.name}` : `折叠分组 ${group.name}`}
-            title={collapsed ? "展开" : "折叠"}
+            aria-label={collapsed ? `${m.expandGroup} ${group.name}` : `${m.collapseGroup} ${group.name}`}
+            title={collapsed ? m.expandGroup : m.collapseGroup}
           >
             {collapsed ? "▸" : "▾"}
           </button>
-          <span className="treeBranchMark">组</span>
+          <span className="treeBranchMark">{m.groupMarker}</span>
           <span className="treeNameLabel treeGroupLabel" title={group.name}>
-            {group.name || "未命名分组"}
+            {group.name || m.unnamedGroup}
           </span>
         </div>
 
@@ -314,19 +227,13 @@ export function HistorySidebar(props: {
                 onClick={() => props.onOpenRequest(group.id, item.id)}
                 onContextMenu={(event) => openRequestMenu(event, group.id, item.id, item.name)}
               >
+                <span className={`treeMethodMini ${item.request.method}`}>{item.request.method}</span>
                 <span className="treeNameLabel treeRequestLabel" title={item.name}>
-                  {item.name || "未命名接口"}
+                  {item.name || m.unnamedRequest}
                 </span>
               </div>
             ))}
-
             {group.childGroups.map((child) => renderGroup(child, depth + 1))}
-
-            {isEmpty ? (
-              <div className="treeHint" style={{ paddingLeft: 44 + depth * 16 }}>
-                右键这个分组可新建子分组或接口
-              </div>
-            ) : null}
           </div>
         ) : null}
       </div>
@@ -338,32 +245,22 @@ export function HistorySidebar(props: {
       <div className="sidebarTop sidebarHero">
         <div className="heroTitleRow">
           <div className="appTitle">PostMini</div>
-          <div className="heroTag">接口工作台</div>
+          <div className="heroTag">{m.appHero}</div>
         </div>
-        <input value={q} onChange={(e) => setQ(e.currentTarget.value)} placeholder="搜索分组、接口、URL 或 Method" />
-        <div className="sidebarSectionHeader">
-          <span className="sectionCaption">接口树</span>
-          <span className="treeTips">右键新增</span>
-        </div>
+        <input value={q} onChange={(e) => setQ(e.currentTarget.value)} placeholder={m.searchPlaceholder} />
         <div className="sidebarButtons sidebarButtonsDense">
           <button type="button" className="btnGhost btnCompact" onClick={props.onExportCollections}>
-            导出接口
+            {m.exportCollections}
           </button>
           <button type="button" className="btnGhost btnCompact" onClick={pickCollectionsImport}>
-            导入接口
+            {m.importCollections}
           </button>
         </div>
-        <input
-          ref={collectionFileRef}
-          type="file"
-          accept="application/json"
-          style={{ display: "none" }}
-          onChange={onCollectionsFileChange}
-        />
+        <input ref={collectionFileRef} type="file" accept="application/json" style={{ display: "none" }} onChange={onCollectionsFileChange} />
       </div>
 
       <div ref={treeRef} className="sidebarTree sidebarTreeCompact" onContextMenu={openRootMenu}>
-        {groups.length === 0 ? <div className="empty">右键空白区域新建分组</div> : groups.map((group) => renderGroup(group))}
+        {groups.length === 0 ? <div className="empty" /> : groups.map((group) => renderGroup(group))}
       </div>
 
       {renderContextMenu()}

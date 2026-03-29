@@ -1,6 +1,8 @@
 import { useMemo } from "react";
+import { getMessages, type Locale } from "../i18n";
 
-export function JsonEditor(props: { value: string; onChange: (v: string) => void; height?: number }) {
+export function JsonEditor(props: { locale: Locale; value: string; onChange: (v: string) => void; height?: number }) {
+  const m = getMessages(props.locale);
   const lines = useMemo(() => Math.min(30, Math.max(6, props.value.split("\n").length)), [props.value]);
   const rows = Math.floor(lines);
 
@@ -9,7 +11,7 @@ export function JsonEditor(props: { value: string; onChange: (v: string) => void
       const v = JSON.parse(props.value || "null");
       props.onChange(JSON.stringify(v, null, 2));
     } catch {
-      // ignore - keep as-is
+      // ignore invalid JSON
     }
   }
 
@@ -17,18 +19,10 @@ export function JsonEditor(props: { value: string; onChange: (v: string) => void
     <div className="jsonEditor">
       <div className="jsonEditorToolbar">
         <button type="button" className="btnGhost" onClick={format}>
-          格式化 JSON
+          {m.formatJson}
         </button>
       </div>
-      <textarea
-        spellCheck={false}
-        className="mono"
-        rows={rows}
-        value={props.value}
-        onChange={(e) => props.onChange(e.currentTarget.value)}
-        placeholder='例如: { "foo": "bar" }'
-      />
+      <textarea spellCheck={false} className="mono" rows={rows} value={props.value} onChange={(e) => props.onChange(e.currentTarget.value)} placeholder={m.jsonPlaceholder} />
     </div>
   );
 }
-

@@ -2,6 +2,7 @@ const KEY_TABS = "postmini.tabs.v1";
 const KEY_ENVS = "postmini.envs.v1";
 const KEY_THEME = "postmini.theme.v1";
 const KEY_COLLECTIONS = "postmini.collections.v1";
+const KEY_LOCALE = "postmini.locale.v1";
 
 export function loadJson<T>(key: string, fallback: T): T {
   try {
@@ -22,5 +23,6 @@ export const storageKeys = {
   envs: KEY_ENVS,
   theme: KEY_THEME,
   collections: KEY_COLLECTIONS,
+  locale: KEY_LOCALE,
 };
 

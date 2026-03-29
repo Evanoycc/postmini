@@ -2,9 +2,10 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export type BodyType = "none" | "json" | "formData";
 
+export type AuthorizationType = "none" | "bearer" | "basic";
+
 export type KvPair = { key: string; value: string };
 
-/** form-data 中的文件字段：path 为本地绝对路径（由系统文件对话框选择） */
 export type FormFileRow = { key: string; path: string };
 
 export type RequestDraft = {
@@ -15,11 +16,15 @@ export type RequestDraft = {
   url: string;
   method: HttpMethod;
   headers: KvPair[];
+  params: KvPair[];
+  authorizationType: AuthorizationType;
+  authBearerToken: string;
+  authBasicUsername: string;
+  authBasicPassword: string;
   bodyType: BodyType;
   bodyText: string;
   formData: KvPair[];
   formFiles: FormFileRow[];
-  /** 非空时由 Rust 将响应体流式写入该路径 */
   saveResponseTo: string;
 };
 

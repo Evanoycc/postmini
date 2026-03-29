@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { useEffect, useMemo, useReducer } from "react";
+import { getMessages, type Locale } from "../i18n";
 import type { EnvVar, FormFileRow, KvPair, RequestDraft, RequestGroup, ResponseView } from "../types";
 import { loadJson, saveJson, storageKeys } from "../utils/storage";
 
@@ -18,6 +19,7 @@ type State = {
   collections: RequestGroup[];
   envs: EnvVar[];
   theme: "light" | "dark";
+  locale: Locale;
 };
 
 type Action =
@@ -36,7 +38,8 @@ type Action =
   | { type: "collection.request.remove"; groupId: string; itemId: string }
   | { type: "collection.set"; collections: RequestGroup[] }
   | { type: "envs.set"; envs: EnvVar[] }
-  | { type: "theme.set"; theme: "light" | "dark" };
+  | { type: "theme.set"; theme: "light" | "dark" }
+  | { type: "locale.set"; locale: Locale };
 
 const emptyKv = (): KvPair => ({ key: "", value: "" });
 
@@ -44,6 +47,11 @@ function normalizeRequest(r: RequestDraft): RequestDraft {
   const formFiles: FormFileRow[] = r.formFiles && r.formFiles.length ? r.formFiles : [{ key: "", path: "" }];
   return {
     ...r,
+    params: r.params && r.params.length ? r.params : [emptyKv()],
+    authorizationType: r.authorizationType ?? "none",
+    authBearerToken: r.authBearerToken ?? "",
+    authBasicUsername: r.authBasicUsername ?? "",
+    authBasicPassword: r.authBasicPassword ?? "",
     formFiles,
     saveResponseTo: r.saveResponseTo ?? "",
     collectionGroupId: r.collectionGroupId ?? null,
@@ -51,15 +59,21 @@ function normalizeRequest(r: RequestDraft): RequestDraft {
   };
 }
 
-function newDraft(): RequestDraft {
+function newDraft(locale: Locale): RequestDraft {
+  const m = getMessages(locale);
   return {
     id: nanoid(),
-    name: "新接口",
+    name: m.defaultNewRequestName,
     collectionGroupId: null,
     collectionItemId: null,
     url: "",
     method: "GET",
     headers: [emptyKv()],
+    params: [emptyKv()],
+    authorizationType: "none",
+    authBearerToken: "",
+    authBasicUsername: "",
+    authBasicPassword: "",
     bodyType: "none",
     bodyText: "",
     formData: [emptyKv()],
@@ -68,57 +82,61 @@ function newDraft(): RequestDraft {
   };
 }
 
-function cloneDraft(input?: Partial<RequestDraft>): RequestDraft {
-  const base = newDraft();
+function cloneDraft(locale: Locale, input?: Partial<RequestDraft>): RequestDraft {
+  const base = newDraft(locale);
   return normalizeRequest({
     ...base,
     ...input,
     id: input?.id ?? base.id,
     headers: input?.headers ? input.headers.map((kv) => ({ ...kv })) : base.headers,
+    params: input?.params ? input.params.map((kv) => ({ ...kv })) : base.params,
     formData: input?.formData ? input.formData.map((kv) => ({ ...kv })) : base.formData,
     formFiles: input?.formFiles ? input.formFiles.map((row) => ({ ...row })) : base.formFiles,
   });
 }
 
-function normalizeCollection(group: RequestGroup): RequestGroup {
+function normalizeCollection(group: RequestGroup, locale: Locale): RequestGroup {
+  const m = getMessages(locale);
   return {
     id: group.id,
-    name: group.name || "未命名分组",
+    name: group.name || m.unnamedGroup,
     items: (group.items ?? []).map((item) => ({
       id: item.id,
-      name: item.name || item.request?.name || "未命名接口",
-      request: cloneDraft({
+      name: item.name || item.request?.name || m.unnamedRequest,
+      request: cloneDraft(locale, {
         ...item.request,
         id: item.id,
-        name: item.name || item.request?.name || "未命名接口",
+        name: item.name || item.request?.name || m.unnamedRequest,
         collectionGroupId: group.id,
         collectionItemId: item.id,
       }),
     })),
-    childGroups: (group.childGroups ?? []).map(normalizeCollection),
+    childGroups: (group.childGroups ?? []).map((child) => normalizeCollection(child, locale)),
   };
 }
 
-function defaultCollections(): RequestGroup[] {
+function defaultCollections(locale: Locale): RequestGroup[] {
+  const m = getMessages(locale);
   const groupId = nanoid();
   const itemId = nanoid();
-  const request = cloneDraft({
+  const request = cloneDraft(locale, {
     id: itemId,
-    name: "示例接口",
+    name: m.sampleRequest,
     collectionGroupId: groupId,
     collectionItemId: itemId,
   });
   return [
     {
       id: groupId,
-      name: "默认分组",
+      name: m.defaultGroup,
       items: [{ id: itemId, name: request.name, request }],
       childGroups: [],
     },
   ];
 }
 
-function sanitizeGroup(group: RequestGroup, seenGroupIds: Set<string>): RequestGroup {
+function sanitizeGroup(group: RequestGroup, seenGroupIds: Set<string>, locale: Locale): RequestGroup {
+  const m = getMessages(locale);
   const groupId = group.id && !seenGroupIds.has(group.id) ? group.id : nanoid();
   seenGroupIds.add(groupId);
   const seenItemIds = new Set<string>();
@@ -128,8 +146,8 @@ function sanitizeGroup(group: RequestGroup, seenGroupIds: Set<string>): RequestG
     .map((item) => {
       const itemId = item.id && !seenItemIds.has(item.id) ? item.id : nanoid();
       seenItemIds.add(itemId);
-      const name = item.name || item.request.name || "未命名接口";
-      const request = cloneDraft({
+      const name = item.name || item.request.name || m.unnamedRequest;
+      const request = cloneDraft(locale, {
         ...item.request,
         id: itemId,
         name,
@@ -139,19 +157,20 @@ function sanitizeGroup(group: RequestGroup, seenGroupIds: Set<string>): RequestG
       return { id: itemId, name, request };
     });
 
-  return normalizeCollection({
-    id: groupId,
-    name: group.name,
-    items,
-    childGroups: (group.childGroups ?? []).map((child) => sanitizeGroup(child, seenGroupIds)),
-  });
+  return normalizeCollection(
+    {
+      id: groupId,
+      name: group.name,
+      items,
+      childGroups: (group.childGroups ?? []).map((child) => sanitizeGroup(child, seenGroupIds, locale)),
+    },
+    locale,
+  );
 }
 
-function sanitizeCollections(input: RequestGroup[]): RequestGroup[] {
+function sanitizeCollections(input: RequestGroup[], locale: Locale): RequestGroup[] {
   const seenGroupIds = new Set<string>();
-  return input
-    .filter((group) => group && typeof group.name === "string")
-    .map((group) => sanitizeGroup(group, seenGroupIds));
+  return input.filter((group) => group && typeof group.name === "string").map((group) => sanitizeGroup(group, seenGroupIds, locale));
 }
 
 function findCollectionItem(
@@ -197,8 +216,9 @@ function findGroupById(groups: RequestGroup[], groupId: string): RequestGroup | 
 }
 
 function initialState(): State {
+  const locale = loadJson<Locale>(storageKeys.locale, "zh-CN");
   const persistedTabs = loadJson<PersistedTabs | null>(storageKeys.tabs, null);
-  const collections = sanitizeCollections(loadJson<RequestGroup[]>(storageKeys.collections, defaultCollections()));
+  const collections = sanitizeCollections(loadJson<RequestGroup[]>(storageKeys.collections, defaultCollections(locale)), locale);
   const envs = loadJson<EnvVar[]>(storageKeys.envs, [{ key: "base_url", value: "" }]);
   const theme = loadJson<"light" | "dark">(storageKeys.theme, "light");
 
@@ -209,23 +229,27 @@ function initialState(): State {
       request: normalizeRequest(t.request as RequestDraft),
       response: {},
     }));
-    const activeTabId =
-      tabs.some((t) => t.id === persistedTabs.activeTabId) ? persistedTabs.activeTabId : tabs[0]!.id;
-    return { tabState: { tabs, activeTabId }, collections, envs, theme };
+    const activeTabId = tabs.some((t) => t.id === persistedTabs.activeTabId) ? persistedTabs.activeTabId : tabs[0]!.id;
+    return { tabState: { tabs, activeTabId }, collections, envs, theme, locale };
   }
 
-  const first = { id: nanoid(), title: "Tab 1", request: newDraft(), response: {} };
-  return { tabState: { tabs: [first], activeTabId: first.id }, collections, envs, theme };
+  const m = getMessages(locale);
+  const first = { id: nanoid(), title: m.defaultTab, request: newDraft(locale), response: {} };
+  return { tabState: { tabs: [first], activeTabId: first.id }, collections, envs, theme, locale };
 }
 
 function reducer(state: State, action: Action): State {
+  const m = getMessages(state.locale);
+
   switch (action.type) {
     case "tab.new": {
-      const next = { id: nanoid(), title: `Tab ${state.tabState.tabs.length + 1}`, request: newDraft(), response: {} };
-      return {
-        ...state,
-        tabState: { tabs: [...state.tabState.tabs, next], activeTabId: next.id },
+      const next = {
+        id: nanoid(),
+        title: `${m.tabPrefix} ${state.tabState.tabs.length + 1}`,
+        request: newDraft(state.locale),
+        response: {},
       };
+      return { ...state, tabState: { tabs: [...state.tabState.tabs, next], activeTabId: next.id } };
     }
     case "tab.openCollection": {
       const existing = state.tabState.tabs.find(
@@ -236,15 +260,15 @@ function reducer(state: State, action: Action): State {
       if (!item) return state;
       const next = {
         id: nanoid(),
-        title: item.name || `Tab ${state.tabState.tabs.length + 1}`,
-        request: cloneDraft(item.request),
+        title: item.name || `${m.tabPrefix} ${state.tabState.tabs.length + 1}`,
+        request: cloneDraft(state.locale, item.request),
         response: {},
       };
       return { ...state, tabState: { tabs: [...state.tabState.tabs, next], activeTabId: next.id } };
     }
     case "tab.close": {
       const tabs = state.tabState.tabs.filter((t) => t.id !== action.id);
-      const kept = tabs.length ? tabs : [{ id: nanoid(), title: "Tab 1", request: newDraft(), response: {} }];
+      const kept = tabs.length ? tabs : [{ id: nanoid(), title: m.defaultTab, request: newDraft(state.locale), response: {} }];
       const activeTabId = state.tabState.activeTabId === action.id ? kept[0]!.id : state.tabState.activeTabId;
       return { ...state, tabState: { tabs: kept, activeTabId } };
     }
@@ -272,7 +296,7 @@ function reducer(state: State, action: Action): State {
         ...group,
         items: group.items.map((item) =>
           item.id === patchedTab.request.collectionItemId
-            ? { ...item, name: patchedTab.request.name, request: cloneDraft(patchedTab.request) }
+            ? { ...item, name: patchedTab.request.name, request: cloneDraft(state.locale, patchedTab.request) }
             : item,
         ),
       }));
@@ -289,7 +313,7 @@ function reducer(state: State, action: Action): State {
     case "collection.group.add": {
       const next: RequestGroup = {
         id: nanoid(),
-        name: action.parentGroupId ? "新子分组" : `分组 ${state.collections.length + 1}`,
+        name: action.parentGroupId ? m.newChildGroupDefault : `${m.groupPrefix} ${state.collections.length + 1}`,
         items: [],
         childGroups: [],
       };
@@ -314,16 +338,16 @@ function reducer(state: State, action: Action): State {
       const tabs = state.tabState.tabs.filter(
         (tab) => !removedGroupIds.includes(tab.request.collectionGroupId ?? "__none__"),
       );
-      const keptTabs = tabs.length ? tabs : [{ id: nanoid(), title: "Tab 1", request: newDraft(), response: {} }];
+      const keptTabs = tabs.length ? tabs : [{ id: nanoid(), title: m.defaultTab, request: newDraft(state.locale), response: {} }];
       const activeTabStillExists = keptTabs.some((tab) => tab.id === state.tabState.activeTabId);
       const activeTabId = activeTabStillExists ? state.tabState.activeTabId : keptTabs[0]!.id;
       return { ...state, collections, tabState: { tabs: keptTabs, activeTabId } };
     }
     case "collection.request.add": {
       const itemId = nanoid();
-      const request = cloneDraft({
+      const request = cloneDraft(state.locale, {
         id: itemId,
-        name: "未命名接口",
+        name: m.unnamedRequest,
         collectionGroupId: action.groupId,
         collectionItemId: itemId,
       });
@@ -360,17 +384,19 @@ function reducer(state: State, action: Action): State {
       const tabs = state.tabState.tabs.filter(
         (tab) => !(tab.request.collectionGroupId === action.groupId && tab.request.collectionItemId === action.itemId),
       );
-      const keptTabs = tabs.length ? tabs : [{ id: nanoid(), title: "Tab 1", request: newDraft(), response: {} }];
+      const keptTabs = tabs.length ? tabs : [{ id: nanoid(), title: m.defaultTab, request: newDraft(state.locale), response: {} }];
       const activeTabStillExists = keptTabs.some((tab) => tab.id === state.tabState.activeTabId);
       const activeTabId = activeTabStillExists ? state.tabState.activeTabId : keptTabs[0]!.id;
       return { ...state, collections, tabState: { tabs: keptTabs, activeTabId } };
     }
     case "collection.set":
-      return { ...state, collections: sanitizeCollections(action.collections) };
+      return { ...state, collections: sanitizeCollections(action.collections, state.locale) };
     case "envs.set":
       return { ...state, envs: action.envs };
     case "theme.set":
       return { ...state, theme: action.theme };
+    case "locale.set":
+      return { ...state, locale: action.locale };
     default:
       return state;
   }
@@ -403,6 +429,11 @@ export function useAppStore() {
     saveJson(storageKeys.theme, state.theme);
     document.documentElement.dataset.theme = state.theme;
   }, [state.theme]);
+
+  useEffect(() => {
+    saveJson(storageKeys.locale, state.locale);
+    document.documentElement.lang = state.locale;
+  }, [state.locale]);
 
   return { state, dispatch, activeTab };
 }
