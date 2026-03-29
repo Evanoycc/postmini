@@ -13,7 +13,7 @@ import { saveTextFile, sendHttp } from "./utils/http";
 import { applyEnvTemplate, applyEnvToFormFiles, applyEnvToKvPairs } from "./utils/template";
 
 function App() {
-  const { state, dispatch, activeTab } = useAppStore();
+  const { state, dispatch, activeTab, activeEnvGroup } = useAppStore();
   const [sending, setSending] = useState(false);
   const [envOpen, setEnvOpen] = useState(false);
   const m = getMessages(state.locale);
@@ -29,7 +29,7 @@ function App() {
 
   async function onSend() {
     const draft = activeTab.request;
-    const envs = state.envs;
+    const envs = activeEnvGroup?.vars ?? [];
     const resolved: RequestDraft = {
       ...draft,
       url: applyEnvTemplate(draft.url, envs),
@@ -75,7 +75,7 @@ function App() {
   }
 
   function importCollections(groups: RequestGroup[]) {
-    dispatch({ type: "collection.set", collections: groups });
+    dispatch({ type: "collection.set", collections: [...state.collections, ...groups] });
   }
 
   return (
@@ -103,7 +103,7 @@ function App() {
               {state.locale === "zh-CN" ? m.languageEn : m.languageZh}
             </button>
             <button type="button" className="btnGhost" onClick={() => setEnvOpen(true)}>
-              {m.environmentVariables}
+              {m.environmentVariables}: {activeEnvGroup?.name ?? "-"}
             </button>
             <button
               type="button"
@@ -132,7 +132,14 @@ function App() {
         </div>
       </div>
 
-      <EnvModal locale={state.locale} open={envOpen} envs={state.envs} onClose={() => setEnvOpen(false)} onSave={(envs) => dispatch({ type: "envs.set", envs })} />
+      <EnvModal
+        locale={state.locale}
+        open={envOpen}
+        envGroups={state.envGroups}
+        activeEnvGroupId={state.activeEnvGroupId}
+        onClose={() => setEnvOpen(false)}
+        onSave={(envGroups, activeEnvGroupId) => dispatch({ type: "env.groups.set", envGroups, activeEnvGroupId })}
+      />
     </div>
   );
 }

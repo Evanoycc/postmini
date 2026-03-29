@@ -38,6 +38,12 @@ export type ResponseView = {
 
 export type EnvVar = KvPair;
 
+export type EnvGroup = {
+  id: string;
+  name: string;
+  vars: EnvVar[];
+};
+
 export type SavedRequestItem = {
   id: string;
   name: string;
